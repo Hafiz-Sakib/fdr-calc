@@ -1,22 +1,33 @@
 {
-  "name": "fdr-calculator",
+  "name": "fdr-summary-app",
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
+    "ajv": "^8.20.0",
+    "ajv-keywords": "^5.1.0",
+    "date-fns": "^3.6.0",
+    "framer-motion": "^11.2.10",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
-    "date-fns": "^3.6.0",
-    "lucide-react": "^0.383.0"
+    "lucide-react": "^0.383.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "^5.0.1"
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "DISABLE_ESLINT_PLUGIN=true react-scripts build"
   },
   "browserslist": {
-    "production": [">0.2%", "not dead", "not op_mini all"],
-    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }

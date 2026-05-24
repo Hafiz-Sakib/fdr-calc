@@ -1,170 +1,226 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatBD, formatDate } from './fdrCalc';
+import { formatBD, formatDate, afterTDS, getFDRStatus } from './fdrCalc';
 
-export function exportCSV(rows, today) {
-  const headers = ['FDR', 'Principal (Tk)', 'Term (mo)', 'Rate (%)', 'Start Date', 'Maturity Date', 'Maturity Amount (Tk)', 'Current Value (Tk)', 'Gain (Tk)', 'Status'];
-  const csvRows = rows.map(r => [
-    r.label,
-    r.principal,
-    r.months,
-    r.rate,
-    formatDate(r.startDate),
-    formatDate(r.maturityDate),
-    Math.round(r.matAmt),
-    Math.round(r.current),
-    Math.round(r.current - r.principal),
-    r.status.label
-  ]);
-
-  const totalPrin = rows.reduce((s, r) => s + r.principal, 0);
-  const totalMat  = rows.reduce((s, r) => s + Math.round(r.matAmt), 0);
-  const totalCur  = rows.reduce((s, r) => s + Math.round(r.current), 0);
-  csvRows.push(['TOTAL', totalPrin, '', '', '', '', totalMat, totalCur, totalCur - totalPrin, '']);
-
-  const content = [headers, ...csvRows]
-    .map(row => row.map(cell => `"${cell}"`).join(','))
-    .join('\n');
-
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `FDR_Summary_${today}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-export function exportPDF(rows, today) {
+/**
+ * Export FDR data to PDF using jsPDF
+ * Note: Hind Siliguri is a Google Font; jsPDF uses built-in fonts.
+ * We use Helvetica as the closest Latin equivalent and embed font data.
+ */
+export async function exportToPDF(fdrs, today) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
 
-  // Header background
-  doc.setFillColor(7, 11, 20);
-  doc.rect(0, 0, pageW, 297, 'F');
+  // ── Background ──
+  doc.setFillColor(6, 13, 26);
+  doc.rect(0, 0, pageW, pageH, 'F');
 
-  // Top accent bar
+  // ── Header bar ──
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageW, 22, 'F');
   doc.setFillColor(59, 130, 246);
-  doc.rect(0, 0, pageW, 1.5, 'F');
+  doc.rect(0, 22, pageW, 1.2, 'F');
 
-  // Left accent bar
+  // ── Left accent ──
   doc.setFillColor(59, 130, 246);
-  doc.rect(0, 0, 1.5, 210, 'F');
+  doc.rect(0, 0, 3, pageH, 'F');
 
-  // Title
+  // ── Title ──
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(22);
-  doc.setTextColor(232, 237, 245);
-  doc.text('Fixed Deposit Portfolio', pageW / 2, 18, { align: 'center' });
+  doc.setFontSize(18);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Fixed Deposit Summary Report', pageW / 2, 12, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
-  doc.text(`Report generated: ${new Date(today).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })}`, pageW / 2, 25, { align: 'center' });
+  const dateStr = today.toLocaleDateString('en-BD', { day: '2-digit', month: 'long', year: 'numeric' });
+  doc.text(`As of ${dateStr}`, pageW / 2, 18, { align: 'center' });
 
-  // Summary cards
-  const totalPrin = rows.reduce((s, r) => s + r.principal, 0);
-  const totalMat  = rows.reduce((s, r) => s + Math.round(r.matAmt), 0);
-  const totalCur  = rows.reduce((s, r) => s + Math.round(r.current), 0);
-  const totalGain = totalCur - totalPrin;
+  // ── Summary totals ──
+  let totalPrin = 0, totalMat = 0, totalCur = 0;
+  fdrs.forEach(f => {
+    totalPrin += f.principal;
+    totalMat  += Math.round(f.matAmt);
+    totalCur  += Math.round(f.currentValue);
+  });
+  const totalGain    = totalCur - totalPrin;
+  const totalAfterTDS = fdrs.reduce((s, f) => s + afterTDS(f.principal, f.currentValue), 0);
 
-  const cards = [
-    { label: 'Total Principal', value: `Tk ${formatBD(totalPrin)}`, color: [232, 237, 245] },
-    { label: 'Total Maturity', value: `Tk ${formatBD(totalMat)}`, color: [232, 237, 245] },
-    { label: 'Current Value', value: `Tk ${formatBD(totalCur)}`, color: [59, 130, 246] },
-    { label: 'Total Gain', value: `Tk ${formatBD(totalGain)}`, color: [0, 245, 196] },
+  // Summary row boxes
+  const summaryY = 28;
+  const boxW = (pageW - 16) / 5;
+  const summaryItems = [
+    { label: 'Total Principal', value: `Tk ${formatBD(totalPrin)}`, color: [255,255,255] },
+    { label: 'Total Maturity',  value: `Tk ${formatBD(totalMat)}`,  color: [255,255,255] },
+    { label: 'Current Value',   value: `Tk ${formatBD(totalCur)}`,  color: [96,165,250]  },
+    { label: 'Total Gain',      value: `Tk ${formatBD(totalGain)}`, color: [52,211,153]  },
+    { label: 'After 10% TDS',   value: `Tk ${formatBD(totalAfterTDS)}`, color: [251,191,36] },
   ];
 
-  const cardW = (pageW - 20) / 4;
-  cards.forEach((card, i) => {
-    const x = 10 + i * cardW;
-    doc.setFillColor(13, 21, 38);
-    doc.roundedRect(x, 30, cardW - 3, 22, 2, 2, 'F');
-    doc.setDrawColor(59, 130, 246);
+  summaryItems.forEach((item, i) => {
+    const x = 6 + i * (boxW + 1);
+    doc.setFillColor(15, 23, 42);
+    doc.roundedRect(x, summaryY, boxW, 16, 2, 2, 'F');
+    doc.setDrawColor(59, 130, 246, 0.3);
     doc.setLineWidth(0.3);
-    doc.roundedRect(x, 30, cardW - 3, 22, 2, 2, 'S');
+    doc.roundedRect(x, summaryY, boxW, 16, 2, 2, 'S');
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
-    doc.text(card.label, x + (cardW - 3) / 2, 37, { align: 'center' });
+    doc.text(item.label, x + boxW / 2, summaryY + 5, { align: 'center' });
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(...card.color);
-    doc.text(card.value, x + (cardW - 3) / 2, 46, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setTextColor(...item.color);
+    doc.text(item.value, x + boxW / 2, summaryY + 12, { align: 'center' });
   });
 
-  // Table
-  const tableHeaders = ['FDR', 'Principal', 'Term', 'Rate', 'Start', 'Maturity', 'Mat. Amount', 'Current Value', 'Gain', 'Status'];
-  const tableRows = rows.map(r => [
-    r.label,
-    `Tk ${formatBD(r.principal)}`,
-    `${r.months} mo`,
-    `${r.rate}%`,
-    formatDate(r.startDate),
-    formatDate(r.maturityDate),
-    `Tk ${formatBD(r.matAmt)}`,
-    `Tk ${formatBD(r.current)}`,
-    `Tk ${formatBD(r.current - r.principal)}`,
-    r.status.label
-  ]);
+  // ── Main Table ──
+  const tableY = summaryY + 20;
+  const headers = [
+    'FDR', 'Principal (Tk)', 'Term', 'Rate', 'Start Date',
+    'Maturity Date', 'Maturity Amt (Tk)', 'Current Value (Tk)', 'After TDS (Tk)', 'Status'
+  ];
 
-  tableRows.push([
-    'TOTAL', `Tk ${formatBD(totalPrin)}`, '', '', '', '',
-    `Tk ${formatBD(totalMat)}`, `Tk ${formatBD(totalCur)}`, `Tk ${formatBD(totalGain)}`, ''
+  const rows = fdrs.map(f => {
+    const status = getFDRStatus(f.startDate, f.maturityDate, today);
+    const aTDS = afterTDS(f.principal, f.currentValue);
+    return [
+      f.label,
+      formatBD(f.principal),
+      `${f.months} mo`,
+      `${f.rate}%`,
+      formatDate(f.startDate),
+      formatDate(f.maturityDate),
+      formatBD(Math.round(f.matAmt)),
+      formatBD(Math.round(f.currentValue)),
+      formatBD(Math.round(aTDS)),
+      status,
+    ];
+  });
+
+  // Total row
+  rows.push([
+    'TOTAL', formatBD(totalPrin), '', '', '', '',
+    formatBD(totalMat), formatBD(Math.round(totalCur)),
+    formatBD(Math.round(totalAfterTDS)), ''
   ]);
 
   autoTable(doc, {
-    head: [tableHeaders],
-    body: tableRows,
-    startY: 57,
-    margin: { left: 10, right: 10 },
+    startY: tableY,
+    head: [headers],
+    body: rows,
     styles: {
       font: 'helvetica',
       fontSize: 8,
-      cellPadding: 4,
-      textColor: [232, 237, 245],
-      fillColor: [13, 21, 38],
-      lineColor: [30, 50, 80],
-      lineWidth: 0.2,
+      cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+      textColor: [226, 232, 240],
+      fillColor: [15, 23, 42],
+      lineColor: [30, 41, 59],
+      lineWidth: 0.3,
     },
     headStyles: {
-      fillColor: [7, 11, 20],
+      fillColor: [15, 23, 42],
       textColor: [255, 255, 255],
       fontStyle: 'bold',
       fontSize: 8.5,
-      lineColor: [59, 130, 246],
-      lineWidth: { bottom: 0.8 },
+      lineWidth: 0,
     },
-    alternateRowStyles: { fillColor: [17, 28, 51] },
-    didParseCell: (data) => {
-      const isTotal = data.row.index === tableRows.length - 1;
-      if (isTotal) {
-        data.cell.styles.fillColor = [20, 37, 70];
+    alternateRowStyles: {
+      fillColor: [10, 17, 30],
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', textColor: [255,255,255] },
+      7: { textColor: [96,165,250], fontStyle: 'bold' },
+      8: { textColor: [251,191,36], fontStyle: 'bold' },
+      9: { textColor: [52,211,153] },
+    },
+    didParseCell(data) {
+      // Highlight total row
+      if (data.row.index === rows.length - 1) {
+        data.cell.styles.fillColor = [20, 30, 48];
         data.cell.styles.fontStyle = 'bold';
-        data.cell.styles.textColor = [59, 130, 246];
+        data.cell.styles.textColor = [255, 255, 255];
       }
-      if (data.column.index === 7 && !isTotal) {
-        data.cell.styles.textColor = [59, 130, 246];
-        data.cell.styles.fontStyle = 'bold';
-      }
-      if (data.column.index === 8 && !isTotal) {
-        data.cell.styles.textColor = [0, 245, 196];
+      // Status colors
+      if (data.column.index === 9 && data.section === 'body') {
+        const val = data.cell.raw;
+        if (val === 'Running')       data.cell.styles.textColor = [52,211,153];
+        if (val === 'Auto-Renewed')  data.cell.styles.textColor = [96,165,250];
+        if (val === 'Not Started')   data.cell.styles.textColor = [251,191,36];
       }
     },
-    foot: [],
+    margin: { left: 6, right: 6 },
+    tableLineColor: [30, 41, 59],
+    tableLineWidth: 0.3,
   });
 
-  // Footer
-  const finalY = doc.lastAutoTable.finalY || 150;
+  // ── Footer ──
+  const finalY = doc.lastAutoTable.finalY || pageH - 15;
+  doc.setFillColor(6, 13, 26);
+  doc.rect(0, pageH - 10, pageW, 10, 'F');
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(100, 116, 139);
-  doc.text('* Interest calculated on simple basis • Auto-renewal assumed upon maturity', 10, finalY + 8);
+  doc.text(
+    '* Interest calculated on simple basis  •  Auto-renewal assumed  •  10% TDS applied on interest portion  •  Confidential Report',
+    pageW / 2, pageH - 4, { align: 'center' }
+  );
 
-  doc.setFillColor(59, 130, 246);
-  doc.rect(0, 208.5, pageW, 1.5, 'F');
+  const filename = `FDR_Summary_${today.toISOString().slice(0,10)}.pdf`;
+  doc.save(filename);
+}
 
-  doc.save(`FDR_Portfolio_${today}.pdf`);
+/**
+ * Export FDR data to CSV
+ */
+export function exportToCSV(fdrs, today) {
+  const headers = [
+    'FDR Label', 'Principal (Tk)', 'Term (Months)', 'Rate (%)',
+    'Start Date', 'Maturity Date', 'Maturity Amount (Tk)',
+    'Current Value (Tk)', 'Gain (Tk)', 'After TDS (Tk)', 'Status'
+  ];
+
+  const rows = fdrs.map(f => {
+    const status = getFDRStatus(f.startDate, f.maturityDate, today);
+    const gain   = Math.round(f.currentValue) - f.principal;
+    const aTDS   = afterTDS(f.principal, f.currentValue);
+    return [
+      f.label,
+      f.principal,
+      f.months,
+      f.rate,
+      formatDate(f.startDate),
+      formatDate(f.maturityDate),
+      Math.round(f.matAmt),
+      Math.round(f.currentValue),
+      gain,
+      Math.round(aTDS),
+      status,
+    ];
+  });
+
+  // Totals
+  const totalPrin = fdrs.reduce((s, f) => s + f.principal, 0);
+  const totalMat  = fdrs.reduce((s, f) => s + Math.round(f.matAmt), 0);
+  const totalCur  = fdrs.reduce((s, f) => s + Math.round(f.currentValue), 0);
+  const totalGain = totalCur - totalPrin;
+  const totalTDS  = fdrs.reduce((s, f) => s + Math.round(afterTDS(f.principal, f.currentValue)), 0);
+
+  rows.push(['TOTAL', totalPrin, '', '', '', '', totalMat, totalCur, totalGain, totalTDS, '']);
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(cell => `"${cell}"`).join(','))
+    .join('\n');
+
+  const blob     = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url      = URL.createObjectURL(blob);
+  const link     = document.createElement('a');
+  link.href      = url;
+  link.download  = `FDR_Summary_${today.toISOString().slice(0,10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
