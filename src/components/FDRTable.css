@@ -1,0 +1,137 @@
+.fdr-table-wrap {
+  background: #0D1526;
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.fdr-table-scroll {
+  overflow-x: auto;
+}
+
+.fdr-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+}
+
+.fdr-table thead th {
+  background: #070B14;
+  color: #64748B;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  white-space: nowrap;
+}
+
+.fdr-table thead th:last-child { width: 40px; }
+
+.fdr-table tbody tr {
+  border-bottom: 1px solid rgba(59, 130, 246, 0.06);
+  transition: background 0.2s;
+  animation: fadeIn 0.4s ease both;
+}
+
+.fdr-table tbody tr:hover { background: rgba(59, 130, 246, 0.04); }
+.fdr-table tbody tr:last-child { border-bottom: none; }
+
+.fdr-table td {
+  padding: 13px 16px;
+  font-size: 13px;
+  color: #94A3B8;
+  vertical-align: middle;
+}
+
+.td-label {
+  font-family: var(--font-display) !important;
+  font-weight: 700 !important;
+  color: #E8EDF5 !important;
+  font-size: 13.5px !important;
+}
+
+.td-mono { font-family: var(--font-mono); font-size: 12.5px; }
+.td-date { color: #64748B !important; font-size: 11.5px !important; }
+.td-center { text-align: center; font-family: var(--font-mono); font-size: 12.5px; }
+
+.td-current {
+  color: #3B82F6 !important;
+  font-weight: 500;
+}
+
+.td-gain {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #00F5C4 !important;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.gain-pct {
+  font-size: 10px;
+  background: rgba(0,245,196,0.07);
+  border: 1px solid rgba(0,245,196,0.15);
+  padding: 2px 6px;
+  border-radius: 20px;
+}
+
+.td-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  padding: 4px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.tbl-delete {
+  background: rgba(239,68,68,0.07);
+  border: 1px solid rgba(239,68,68,0.12);
+  color: rgba(239,68,68,0.4);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.tbl-delete:hover { background: rgba(239,68,68,0.15); color: #EF4444; border-color: rgba(239,68,68,0.35); }
+
+.fdr-table tfoot .total-row {
+  background: #111C33;
+  border-top: 1.5px solid rgba(59, 130, 246, 0.25);
+}
+
+.total-row td {
+  padding: 14px 16px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: #3B82F6 !important;
+  font-size: 13px;
+}
+
+.total-row .td-label {
+  color: #3B82F6 !important;
+  letter-spacing: 0.08em;
+  font-size: 11px !important;
+}
+
+.total-row .td-mono { font-family: var(--font-mono); }
