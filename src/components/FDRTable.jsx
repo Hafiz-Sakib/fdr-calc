@@ -103,6 +103,11 @@ export default function FDRTable({ fdrs, today, onDelete }) {
               const daysInfo = getDaysInfo(fdr.startDate, fdr.maturityDate, today);
               const isEven   = i % 2 === 0;
 
+              // For progress bar percent: use renewedPercent for Auto-Renewed
+              const barPercent = status === 'Auto-Renewed'
+                ? (daysInfo.renewedPercent ?? daysInfo.percent)
+                : daysInfo.percent;
+
               return (
                 <tr
                   key={fdr.id}
@@ -112,7 +117,9 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                   {/* FDR Name */}
                   <td className="px-4 py-3">
                     <div className="font-bold text-white text-sm">{fdr.label}</div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">{daysInfo.label}</div>
+                    <div className={`text-[11px] mt-0.5 ${status === 'Auto-Renewed' ? 'text-blue-400' : 'text-slate-500'}`}>
+                      {daysInfo.label}
+                    </div>
                   </td>
 
                   {/* Principal */}
@@ -166,8 +173,12 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                   </td>
 
                   {/* Progress */}
-                  <td className="px-4 py-3 min-w-[100px]">
-                    <ProgressBar percent={daysInfo.percent} status={status} />
+                  <td className="px-4 py-3 min-w-[110px]">
+                    <ProgressBar
+                      percent={barPercent}
+                      status={status}
+                      renewedPercent={daysInfo.renewedPercent}
+                    />
                   </td>
 
                   {/* Status */}

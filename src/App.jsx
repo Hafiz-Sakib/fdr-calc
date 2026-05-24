@@ -7,7 +7,7 @@ import Toolbar from './components/Toolbar';
 import AddFDRModal from './components/AddFDRModal';
 import ChartSection from './components/ChartSection';
 import Footer from './components/Footer';
-import { calculateFDR } from './utils/fdrCalc';
+import { calculateFDR, parseDate } from './utils/fdrCalc';
 
 const DEFAULT_FDRS = [
   { id: 'fdr-001', label: 'FDR 1', principal: 300000, months: 6, rate: 9.0, startDate: '2025-07-17', maturityDate: '2026-01-17' },
@@ -16,11 +16,29 @@ const DEFAULT_FDRS = [
   { id: 'fdr-004', label: 'FDR 4', principal: 70000,  months: 3, rate: 8.0, startDate: '2026-05-14', maturityDate: '2026-08-14' },
 ];
 
+// Format a Date object as YYYY-MM-DD for input[type=date]
+function toInputDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export default function App() {
-  const today = useMemo(() => new Date(), []);
-  const [rawFdrs, setRawFdrs]   = useState(DEFAULT_FDRS);
-  const [showModal, setShowModal] = useState(false);
-  const [viewMode, setViewMode]  = useState('card'); // 'card' | 'table'
+  const realToday = useMemo(() => new Date(), []);
+  const [rawFdrs, setRawFdrs]     = useState(DEFAULT_FDRS);
+  const [showModal, setShowModal]  = useState(false);
+  const [viewMode, setViewMode]    = useState('card');
+  // Date picker state — default = today
+  const [selectedDateStr, setSelectedDateStr] = useState(toInputDate(realToday));
+
+  // The "active date" used for all calculations
+  const today = useMemo(() => {
+    const [y, m, d] = selectedDateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }, [selectedDateStr]);
+
+  const isCustomDate = selectedDateStr !== toInputDate(realToday);
 
   const fdrs = useMemo(() => rawFdrs.map(f => {
     const { matAmt, currentValue } = calculateFDR(f.principal, f.months, f.rate, f.startDate, f.maturityDate, today);
@@ -40,7 +58,13 @@ export default function App() {
       </div>
 
       <div className="relative z-10">
-        <Header today={today} />
+        <Header
+          today={today}
+          realToday={realToday}
+          selectedDateStr={selectedDateStr}
+          onDateChange={setSelectedDateStr}
+          isCustomDate={isCustomDate}
+        />
 
         <main className="px-4 sm:px-6 lg:px-8 pb-8 max-w-screen-xl mx-auto">
           <SummaryCards fdrs={fdrs} />

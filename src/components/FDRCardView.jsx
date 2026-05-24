@@ -27,6 +27,10 @@ function FDRCard({ fdr, today, onDelete }) {
     'Not Started':  'hover:border-amber-500/40',
   }[status] || 'hover:border-blue-500/40';
 
+  // For Auto-Renewed: show renewal cycle info
+  const renewedPercent = daysInfo.renewedPercent ?? daysInfo.percent;
+  const progressPct    = status === 'Auto-Renewed' ? renewedPercent : daysInfo.percent;
+
   return (
     <div className={`glass-card border border-white/[0.07] ${borderColor} transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl flex flex-col`}
          style={{ background: 'rgba(13,20,35,0.85)' }}>
@@ -36,7 +40,6 @@ function FDRCard({ fdr, today, onDelete }) {
         <div>
           <h3 className="text-xl font-bold text-white tracking-tight">{fdr.label}</h3>
           <div className="mt-1.5 flex items-center gap-1.5">
-            {/* Status badge */}
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${cfg.bg} ${cfg.text} ${cfg.border} ${status === 'Running' ? 'badge-running' : ''}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
               {status}
@@ -84,7 +87,7 @@ function FDRCard({ fdr, today, onDelete }) {
             <span className="tabular-nums">{formatDate(fdr.maturityDate)}</span>
           </div>
           <span className={`text-[11px] font-bold tabular-nums ${cfg.text}`}>
-            {Math.round(daysInfo.percent)}%
+            {Math.round(progressPct)}%
           </span>
         </div>
 
@@ -92,17 +95,48 @@ function FDRCard({ fdr, today, onDelete }) {
         <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full bg-gradient-to-r ${progressColor} transition-all duration-1000`}
-            style={{ width: `${Math.max(1, daysInfo.percent)}%` }}
+            style={{ width: `${Math.max(1, progressPct)}%` }}
           />
         </div>
 
         {/* Status label below bar */}
-        <p className={`text-[11px] mt-1.5 font-medium ${cfg.text}`}>
-          {status === 'Running'      && `${daysInfo.days} days remaining`}
-          {status === 'Auto-Renewed' && 'Auto-renewed'}
-          {status === 'Not Started'  && `Starts in ${daysInfo.days} days`}
-        </p>
+        <div className="mt-1.5">
+          {status === 'Running' && (
+            <p className={`text-[11px] font-medium ${cfg.text}`}>
+              {daysInfo.label}
+            </p>
+          )}
+          {status === 'Auto-Renewed' && (
+            <div className="flex items-center justify-between">
+              <p className={`text-[11px] font-medium ${cfg.text}`}>
+                {daysInfo.label}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                New cycle: {Math.round(renewedPercent)}% done
+              </p>
+            </div>
+          )}
+          {status === 'Not Started' && (
+            <p className={`text-[11px] font-medium ${cfg.text}`}>
+              {daysInfo.label}
+            </p>
+          )}
+        </div>
       </div>
+
+      {/* ── Auto-Renewed cycle dates (extra row) ── */}
+      {status === 'Auto-Renewed' && daysInfo.renewalStart && (
+        <div className="mx-5 mb-3 rounded-xl px-3 py-2 border border-blue-500/20 flex items-center justify-between"
+             style={{ background: 'rgba(59,130,246,0.06)' }}>
+          <div>
+            <p className="text-[10px] text-blue-400/70 font-bold uppercase tracking-wider mb-0.5">Current Renewal Cycle</p>
+            <p className="text-[11px] text-slate-400 tabular-nums">
+              {formatDate(daysInfo.renewalStart)} → {formatDate(daysInfo.nextMaturity)}
+            </p>
+          </div>
+          <p className="text-[11px] font-bold text-blue-400">{daysInfo.days}d left</p>
+        </div>
+      )}
 
       {/* ── Maturity + Current Value ── */}
       <div className="mx-5 mb-4 grid grid-cols-2 gap-3">
