@@ -1,17 +1,21 @@
-import React, { useEffect, useState } from 'react';
-import { formatBD, afterTDS } from '../utils/fdrCalc';
-import { TrendingUp, Wallet, BarChart3, PiggyBank, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useState } from "react";
+import { formatBD } from "../utils/fdrCalc";
+import {
+  TrendingUp,
+  Wallet,
+  BarChart3,
+  PiggyBank,
+  ShieldCheck,
+} from "lucide-react";
 
-function AnimatedNumber({ value, prefix = 'Tk ' }) {
+function AnimatedNumber({ value, prefix = "Tk " }) {
   const [display, setDisplay] = useState(0);
 
   useEffect(() => {
-    const start = 0;
     const end = Math.round(value);
-    const duration = 1000;
     const steps = 50;
-    const increment = (end - start) / steps;
-    let current = start;
+    const increment = (end - 0) / steps;
+    let current = 0;
     let step = 0;
     const timer = setInterval(() => {
       step++;
@@ -22,82 +26,91 @@ function AnimatedNumber({ value, prefix = 'Tk ' }) {
       } else {
         setDisplay(Math.round(current));
       }
-    }, duration / steps);
+    }, 1000 / steps);
     return () => clearInterval(timer);
   }, [value]);
 
   return (
     <span className="count-anim tabular-nums">
-      {prefix}{formatBD(display)}
+      {prefix}
+      {formatBD(display)}
     </span>
   );
 }
 
 const cards = (totals) => [
   {
-    label: 'Total Principal',
+    label: "Total Principal",
     value: totals.principal,
     icon: Wallet,
-    color: 'from-slate-500/20 to-slate-600/10',
-    border: 'border-slate-500/20',
-    iconColor: 'text-slate-300',
-    textColor: 'text-white',
+    color: "from-slate-500/20 to-slate-600/10",
+    border: "border-slate-500/20",
+    iconColor: "text-slate-300",
+    textColor: "text-white",
     desc: `${totals.count} active FDRs`,
   },
   {
-    label: 'Total Maturity',
+    label: "Total Maturity",
     value: totals.maturity,
     icon: BarChart3,
-    color: 'from-violet-500/20 to-violet-600/10',
-    border: 'border-violet-500/20',
-    iconColor: 'text-violet-400',
-    textColor: 'text-violet-100',
-    desc: 'At maturity value',
+    color: "from-violet-500/20 to-violet-600/10",
+    border: "border-violet-500/20",
+    iconColor: "text-violet-400",
+    textColor: "text-violet-100",
+    desc: "Net of TDS at maturity",
   },
   {
-    label: 'Current Value',
+    label: "Current Value",
     value: totals.current,
     icon: TrendingUp,
-    color: 'from-blue-500/20 to-blue-600/10',
-    border: 'border-blue-500/20',
-    iconColor: 'text-blue-400',
-    textColor: 'text-blue-100',
-    desc: 'As of today',
+    color: "from-blue-500/20 to-blue-600/10",
+    border: "border-blue-500/20",
+    iconColor: "text-blue-400",
+    textColor: "text-blue-100",
+    desc: "Net of TDS as of today",
   },
   {
-    label: 'Total Gain',
+    label: "Net Gain",
     value: totals.gain,
     icon: PiggyBank,
-    color: 'from-emerald-500/20 to-emerald-600/10',
-    border: 'border-emerald-500/20',
-    iconColor: 'text-emerald-400',
-    textColor: 'text-emerald-100',
-    desc: `${((totals.gain / totals.principal) * 100).toFixed(2)}% earned`,
+    color: "from-emerald-500/20 to-emerald-600/10",
+    border: "border-emerald-500/20",
+    iconColor: "text-emerald-400",
+    textColor: "text-emerald-100",
+    desc:
+      totals.principal > 0
+        ? `${((totals.gain / totals.principal) * 100).toFixed(2)}% earned (after TDS)`
+        : "—",
   },
   {
-    label: 'After 10% TDS',
-    value: totals.afterTDS,
+    label: "Total TDS (Current Cycles)",
+    value: totals.totalTDSThisCycle,
     icon: ShieldCheck,
-    color: 'from-amber-500/20 to-amber-600/10',
-    border: 'border-amber-500/20',
-    iconColor: 'text-amber-400',
-    textColor: 'text-amber-100',
-    desc: 'Net after tax deduction',
+    color: "from-amber-500/20 to-amber-600/10",
+    border: "border-amber-500/20",
+    iconColor: "text-amber-400",
+    textColor: "text-amber-100",
+    desc: "Tax deducted this cycle",
   },
 ];
 
 export default function SummaryCards({ fdrs }) {
   const totals = React.useMemo(() => {
     const principal = fdrs.reduce((s, f) => s + f.principal, 0);
-    const maturity  = fdrs.reduce((s, f) => s + Math.round(f.matAmt), 0);
-    const current   = fdrs.reduce((s, f) => s + Math.round(f.currentValue), 0);
-    const tdsTotal  = fdrs.reduce((s, f) => s + Math.round(afterTDS(f.principal, f.currentValue)), 0);
+    // matAmt and currentValue are already net of TDS in the new engine
+    const maturity = fdrs.reduce((s, f) => s + Math.round(f.matAmt), 0);
+    const current = fdrs.reduce((s, f) => s + Math.round(f.currentValue), 0);
+    // tdsThisCycle comes from calculateFDR
+    const totalTDSThisCycle = fdrs.reduce(
+      (s, f) => s + Math.round(f.tdsThisCycle ?? 0),
+      0,
+    );
     return {
       principal,
       maturity,
       current,
       gain: current - principal,
-      afterTDS: tdsTotal,
+      totalTDSThisCycle,
       count: fdrs.length,
     };
   }, [fdrs]);
@@ -116,7 +129,9 @@ export default function SummaryCards({ fdrs }) {
               <span className="text-xs font-medium text-slate-400 uppercase tracking-wider leading-tight">
                 {card.label}
               </span>
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 ${card.iconColor}`}>
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 ${card.iconColor}`}
+              >
                 <Icon size={16} />
               </div>
             </div>
