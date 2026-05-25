@@ -8,10 +8,12 @@ import { Trash2, Calendar, TrendingUp, ShieldCheck } from 'lucide-react';
 // ── Single FDR Card ───────────────────────────────────────────────────────────
 function FDRCard({ fdr, today, onDelete }) {
   const status    = getFDRStatus(fdr.startDate, fdr.maturityDate, today);
-  const daysInfo  = getDaysInfo(fdr.startDate, fdr.maturityDate, today);
+  const daysInfo  = getDaysInfo(fdr.startDate, fdr.maturityDate, today, fdr);
   const cfg       = STATUS_CONFIG[status];
+  // gain is always vs. the ORIGINAL invested principal
   const gain      = Math.round(fdr.currentValue) - fdr.principal;
   const gainPct   = ((gain / fdr.principal) * 100).toFixed(2);
+  // TDS on total accumulated interest (currentValue - original principal)
   const aTDS      = Math.round(afterTDS(fdr.principal, fdr.currentValue));
   const tdsAmount = Math.round(fdr.currentValue) - aTDS;
 
@@ -129,7 +131,14 @@ function FDRCard({ fdr, today, onDelete }) {
         <div className="mx-5 mb-3 rounded-xl px-3 py-2 border border-blue-500/20 flex items-center justify-between"
              style={{ background: 'rgba(59,130,246,0.06)' }}>
           <div>
-            <p className="text-[10px] text-blue-400/70 font-bold uppercase tracking-wider mb-0.5">Current Renewal Cycle</p>
+            <p className="text-[10px] text-blue-400/70 font-bold uppercase tracking-wider mb-0.5">
+              Current Renewal Cycle
+              {daysInfo.completedCycles > 0 && (
+                <span className="ml-1.5 text-blue-400/50 normal-case font-normal">
+                  (cycle {daysInfo.completedCycles + 1})
+                </span>
+              )}
+            </p>
             <p className="text-[11px] text-slate-400 tabular-nums">
               {formatDate(daysInfo.renewalStart)} → {formatDate(daysInfo.nextMaturity)}
             </p>

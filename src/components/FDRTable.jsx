@@ -100,7 +100,7 @@ export default function FDRTable({ fdrs, today, onDelete }) {
               const status   = getFDRStatus(fdr.startDate, fdr.maturityDate, today);
               const gain     = Math.round(fdr.currentValue) - fdr.principal;
               const aTDS     = Math.round(afterTDS(fdr.principal, fdr.currentValue));
-              const daysInfo = getDaysInfo(fdr.startDate, fdr.maturityDate, today);
+              const daysInfo = getDaysInfo(fdr.startDate, fdr.maturityDate, today, fdr);
               const isEven   = i % 2 === 0;
 
               // For progress bar percent: use renewedPercent for Auto-Renewed

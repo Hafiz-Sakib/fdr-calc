@@ -41,8 +41,8 @@ export default function App() {
   const isCustomDate = selectedDateStr !== toInputDate(realToday);
 
   const fdrs = useMemo(() => rawFdrs.map(f => {
-    const { matAmt, currentValue } = calculateFDR(f.principal, f.months, f.rate, f.startDate, f.maturityDate, today);
-    return { ...f, matAmt, currentValue };
+    const result = calculateFDR(f.principal, f.months, f.rate, f.startDate, f.maturityDate, today);
+    return { ...f, ...result };
   }), [rawFdrs, today]);
 
   const handleAdd    = (fdr) => setRawFdrs(prev => [...prev, fdr]);

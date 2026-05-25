@@ -24,33 +24,7 @@ export function formatTk(amount) {
 }
 
 /**
- * Calculate maturity amount (simple interest)
- */
-export function maturityAmount(principal, ratePct, months) {
-  return principal + principal * (ratePct / 100) * months / 12;
-}
-
-/**
- * Calculate accrued interest for given days
- */
-export function accruedInterest(principal, ratePct, days) {
-  return principal * (ratePct / 100) * days / 365;
-}
-
-/**
- * Get latest renewal date
- */
-export function latestRenewalDate(firstMaturity, durationMonths, today) {
-  let renewal = new Date(firstMaturity);
-  while (true) {
-    const nxt = addMonths(renewal, durationMonths);
-    if (nxt > today) return renewal;
-    renewal = nxt;
-  }
-}
-
-/**
- * Add months to a date
+ * Add months to a date (preserves day clamping for short months)
  */
 export function addMonths(date, months) {
   const d = new Date(date);
@@ -68,25 +42,127 @@ export function parseDate(str) {
 }
 
 /**
- * Calculate FDR current value and maturity amount
+ * Calculate interest earned in one cycle using simple interest.
+ * interest = principal × (rate/100) × (months/12)
+ */
+export function cycleInterest(principal, ratePct, months) {
+  return principal * (ratePct / 100) * (months / 12);
+}
+
+/**
+ * Calculate accrued interest for a partial period (given elapsed days).
+ * Uses 365-day year.
+ */
+export function accruedInterest(principal, ratePct, days) {
+  return principal * (ratePct / 100) * (days / 365);
+}
+
+/**
+ * Compute the full cycle history up to (but not including) the cycle
+ * that contains `today`. Returns:
+ *
+ *   cycleNumber    — 1-based index of the CURRENT (possibly partial) cycle
+ *   cyclePrincipal — principal at the START of the current cycle
+ *   cycleStart     — Date: start of current cycle
+ *   cycleEnd       — Date: end (maturity) of current cycle
+ *   completedCycles— number of fully elapsed cycles before current
+ *
+ * Each completed cycle rolls: newPrincipal = prevPrincipal + cycleInterest(...)
+ */
+export function getCycleState(principal, ratePct, months, firstMaturity, today) {
+  let cyclePrincipal = principal;
+  let cycleStart = addMonths(firstMaturity, -months); // original start date
+  let cycleEnd = new Date(firstMaturity);
+  let completedCycles = 0;
+
+  // Advance through completed cycles
+  while (cycleEnd <= today) {
+    const interest = cycleInterest(cyclePrincipal, ratePct, months);
+    cyclePrincipal = cyclePrincipal + interest; // compound: new principal for next cycle
+    cycleStart = new Date(cycleEnd);
+    cycleEnd = addMonths(cycleEnd, months);
+    completedCycles++;
+  }
+
+  return {
+    cycleNumber: completedCycles + 1,
+    cyclePrincipal,   // principal for the current (possibly partial) cycle
+    cycleStart,       // start of current cycle
+    cycleEnd,         // end (maturity) of current cycle
+    completedCycles,
+  };
+}
+
+/**
+ * Get duration in months between startDate and maturityDate
+ */
+export function getDurationMonths(startDate, maturityDate) {
+  const start = parseDate(startDate);
+  const mat = parseDate(maturityDate);
+  return (mat.getFullYear() - start.getFullYear()) * 12 + (mat.getMonth() - start.getMonth());
+}
+
+/**
+ * Calculate FDR current value, maturity amount, and cycle info.
+ *
+ * Key fixes vs. old code:
+ *  - Each renewal cycle uses (principal + accumulated interest) as new principal
+ *  - matAmt reflects the CURRENT cycle's maturity (not just original first cycle)
+ *  - currentValue uses the current-cycle principal for accrual
+ *  - gain is always relative to the ORIGINAL principal stored on the FDR
  */
 export function calculateFDR(principal, months, ratePct, startDate, maturityDate, today) {
   const start = parseDate(startDate);
   const mat = parseDate(maturityDate);
-  const matAmt = maturityAmount(principal, ratePct, months);
 
+  // ── Before FDR starts ──────────────────────────────────────────────────
   if (today < start) {
-    return { matAmt, currentValue: principal };
-  } else if (today < mat) {
-    const days = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-    const current = principal + accruedInterest(principal, ratePct, days);
-    return { matAmt, currentValue: current };
-  } else {
-    const renewal = latestRenewalDate(mat, months, today);
-    const daysSince = Math.floor((today - renewal) / (1000 * 60 * 60 * 24));
-    const current = matAmt + accruedInterest(matAmt, ratePct, daysSince);
-    return { matAmt, currentValue: current };
+    const firstMatAmt = principal + cycleInterest(principal, ratePct, months);
+    return {
+      matAmt: firstMatAmt,
+      currentValue: principal,
+      cyclePrincipal: principal,
+      cycleStart: start,
+      cycleEnd: mat,
+      completedCycles: 0,
+    };
   }
+
+  // ── During first cycle (before first maturity) ─────────────────────────
+  if (today < mat) {
+    const firstMatAmt = principal + cycleInterest(principal, ratePct, months);
+    const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+    const currentValue = principal + accruedInterest(principal, ratePct, daysElapsed);
+    return {
+      matAmt: firstMatAmt,
+      currentValue,
+      cyclePrincipal: principal,
+      cycleStart: start,
+      cycleEnd: mat,
+      completedCycles: 0,
+    };
+  }
+
+  // ── Auto-renewed (past first maturity) ────────────────────────────────
+  // Determine which cycle we're currently in, compounding principal each time
+  const state = getCycleState(principal, ratePct, months, mat, today);
+  const { cyclePrincipal, cycleStart, cycleEnd, completedCycles } = state;
+
+  // Maturity amount for the CURRENT cycle
+  const matAmt = cyclePrincipal + cycleInterest(cyclePrincipal, ratePct, months);
+
+  // Current value: cyclePrincipal + accrued interest since cycleStart
+  const daysInCycle = Math.floor((today - cycleStart) / (1000 * 60 * 60 * 24));
+  const currentValue = cyclePrincipal + accruedInterest(cyclePrincipal, ratePct, daysInCycle);
+
+  return {
+    matAmt,
+    currentValue,
+    cyclePrincipal,
+    cycleStart,
+    cycleEnd,
+    completedCycles,
+  };
 }
 
 /**
@@ -101,10 +177,13 @@ export function getFDRStatus(startDate, maturityDate, today) {
 }
 
 /**
- * Calculate after-TDS values (10% TDS on interest only)
+ * Calculate after-TDS values.
+ * TDS (10%) is applied on the TOTAL gain vs. the original principal.
+ * Note: Bangladesh TDS on FDR interest is applied per cycle at maturity,
+ * but here we compute accumulated TDS on total interest earned so far.
  */
-export function afterTDS(principal, currentValue) {
-  const interest = currentValue - principal;
+export function afterTDS(originalPrincipal, currentValue) {
+  const interest = currentValue - originalPrincipal;
   const tds = interest * 0.10;
   return currentValue - tds;
 }
@@ -129,8 +208,8 @@ export function formatDateLong(dateStr) {
 }
 
 /**
- * Format a duration in months+days as a readable string.
- * e.g. 2 months 5 days → "2m 5d", 0 months 12 days → "12d"
+ * Format a duration in days as a readable string.
+ * e.g. 65 days → "2mo 5d", 12 days → "12d"
  */
 export function formatMonthsDays(totalDays) {
   const months = Math.floor(totalDays / 30);
@@ -141,21 +220,20 @@ export function formatMonthsDays(totalDays) {
 }
 
 /**
- * Get days remaining or elapsed — with updated label logic:
- * - Running: "Xd remaining" shown as months+days
- * - Auto-Renewed: shows new period percent + overdue info in label
- * - Not Started: "Starts in Xd"
+ * Get progress/days info for display.
+ * For Auto-Renewed FDRs, uses the current cycle's start/end dates.
  *
  * Returns:
- *   label          — human-readable string shown under progress bar / in table
- *   days           — raw days (remaining for Running; elapsed in new period for Auto-Renewed)
- *   percent        — progress percent
- *   renewedPercent — for Auto-Renewed: percent elapsed in current renewal cycle
- *   renewalStart   — Date: when current cycle began (Auto-Renewed only)
- *   nextMaturity   — Date: when current cycle ends (Auto-Renewed only)
- *   overdueDays    — days since ORIGINAL maturity date (Auto-Renewed: after passes)
+ *   label          — human-readable string
+ *   days           — days remaining in current cycle
+ *   percent        — progress % within current cycle
+ *   renewedPercent — alias of percent (for Auto-Renewed)
+ *   renewalStart   — Date: current cycle start
+ *   nextMaturity   — Date: current cycle end
+ *   overdueDays    — total days since original maturity
+ *   completedCycles— number of completed auto-renewal cycles
  */
-export function getDaysInfo(startDate, maturityDate, today) {
+export function getDaysInfo(startDate, maturityDate, today, fdrExtra) {
   const start = parseDate(startDate);
   const mat = parseDate(maturityDate);
   const status = getFDRStatus(startDate, maturityDate, today);
@@ -163,45 +241,51 @@ export function getDaysInfo(startDate, maturityDate, today) {
   if (status === 'Not Started') {
     const days = Math.ceil((start - today) / (1000 * 60 * 60 * 24));
     return { label: `Starts in ${formatMonthsDays(days)}`, days, percent: 0 };
-  } else if (status === 'Running') {
+  }
+
+  if (status === 'Running') {
     const total = Math.ceil((mat - start) / (1000 * 60 * 60 * 24));
     const elapsed = Math.ceil((today - start) / (1000 * 60 * 60 * 24));
     const percent = Math.min(100, (elapsed / total) * 100);
     const remaining = Math.ceil((mat - today) / (1000 * 60 * 60 * 24));
     return { label: `${formatMonthsDays(remaining)} remaining`, days: remaining, percent };
-  } else {
-    // Auto-Renewed
-    const durationMonths = getDurationMonths(startDate, maturityDate);
-    const renewal = latestRenewalDate(parseDate(maturityDate), durationMonths, today);
-    const nextMat = addMonths(renewal, durationMonths);
-
-    const total = Math.ceil((nextMat - renewal) / (1000 * 60 * 60 * 24));
-    const elapsed = Math.ceil((today - renewal) / (1000 * 60 * 60 * 24));
-    const renewedPercent = Math.min(100, (elapsed / total) * 100);
-
-    // How long since ORIGINAL maturity date (total overdue)
-    const overdueDays = Math.ceil((today - mat) / (1000 * 60 * 60 * 24));
-    const overdueStr = formatMonthsDays(overdueDays);
-
-    // Days remaining in current cycle
-    const remaining = Math.ceil((nextMat - today) / (1000 * 60 * 60 * 24));
-
-    return {
-      label: `${overdueStr} past maturity`,
-      days: remaining,
-      percent: renewedPercent,
-      renewedPercent,
-      renewalStart: renewal,
-      nextMaturity: nextMat,
-      overdueDays,
-    };
   }
-}
 
-export function getDurationMonths(startDate, maturityDate) {
-  const start = parseDate(startDate);
-  const mat = parseDate(maturityDate);
-  return (mat.getFullYear() - start.getFullYear()) * 12 + (mat.getMonth() - start.getMonth());
+  // Auto-Renewed — use cycle info from calculateFDR if available, otherwise recompute
+  const months = getDurationMonths(startDate, maturityDate);
+  let cycleStart, cycleEnd, completedCycles;
+
+  if (fdrExtra && fdrExtra.cycleStart && fdrExtra.cycleEnd) {
+    cycleStart = parseDate(fdrExtra.cycleStart);
+    cycleEnd   = parseDate(fdrExtra.cycleEnd);
+    completedCycles = fdrExtra.completedCycles || 0;
+  } else {
+    const state = getCycleState(
+      fdrExtra?.principal || 0, fdrExtra?.rate || 0, months, mat, today
+    );
+    cycleStart = state.cycleStart;
+    cycleEnd   = state.cycleEnd;
+    completedCycles = state.completedCycles;
+  }
+
+  const totalCycleDays = Math.ceil((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24));
+  const elapsedInCycle = Math.max(0, Math.ceil((today - cycleStart) / (1000 * 60 * 60 * 24)));
+  const renewedPercent = Math.min(100, (elapsedInCycle / totalCycleDays) * 100);
+
+  const overdueDays = Math.ceil((today - mat) / (1000 * 60 * 60 * 24));
+  const overdueStr  = formatMonthsDays(overdueDays);
+  const remaining   = Math.ceil((cycleEnd - today) / (1000 * 60 * 60 * 24));
+
+  return {
+    label: `${overdueStr} past maturity`,
+    days: remaining,
+    percent: renewedPercent,
+    renewedPercent,
+    renewalStart: cycleStart,
+    nextMaturity: cycleEnd,
+    overdueDays,
+    completedCycles,
+  };
 }
 
 /**
@@ -215,7 +299,7 @@ export function genId() {
  * Status color config
  */
 export const STATUS_CONFIG = {
-  'Running':     { bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30', dot: 'bg-emerald-400' },
+  'Running':      { bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30', dot: 'bg-emerald-400' },
   'Auto-Renewed': { bg: 'bg-blue-500/15',   text: 'text-blue-400',    border: 'border-blue-500/30',    dot: 'bg-blue-400'    },
   'Not Started':  { bg: 'bg-amber-500/15',  text: 'text-amber-400',   border: 'border-amber-500/30',   dot: 'bg-amber-400'   },
 };
