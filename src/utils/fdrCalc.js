@@ -3,11 +3,14 @@
 //   • TDS (Tax Deducted at Source) = 10% on interest earned
 //   • At every auto-renewal boundary:
 //       newPrincipal = oldPrincipal + netInterest   (TDS deducted BEFORE renewal)
-//   • "currentValue" = what you would withdraw today (principal + net accrued interest)
-//   • "matAmt"       = what you receive at end of current cycle (principal + net cycle interest)
+//   • New cycle starts the DAY AFTER the previous cycle's maturity date
+//       e.g. cycle 1 ends 01.08.26 → cycle 2 starts 02.08.26
+//   • "currentValue" = what you would withdraw today (cyclePrincipal + net accrued interest)
+//   • "matAmt"       = what you receive at end of current cycle (cyclePrincipal + net cycle interest)
+//   • "totalTDSPaid" = TDS from COMPLETED cycles only (excludes current cycle's TDS)
 // ──────────────────────────────────────────────────────────────────────────
 
-/** TDS rate (10 %) */
+/** TDS rate (10%) */
 export const TDS_RATE = 0.1;
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -53,7 +56,17 @@ export function addMonths(date, months) {
 }
 
 /**
- * Parse "YYYY-MM-DD" string → Date (local midnight, no TZ shift)
+ * Add days to a date — returns a new Date.
+ */
+export function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+/**
+ * Parse "YYYY-MM-DD" string → Date (local midnight, no TZ shift).
+ * Also accepts a Date object (returns it as-is).
  */
 export function parseDate(str) {
   if (str instanceof Date) return str;
@@ -97,7 +110,7 @@ export function formatMonthsDays(totalDays) {
 }
 
 /**
- * Get duration in whole months between startDate and maturityDate
+ * Get duration in whole months between startDate and maturityDate.
  */
 export function getDurationMonths(startDate, maturityDate) {
   const start = parseDate(startDate);
@@ -130,7 +143,7 @@ export function accruedInterest(principal, ratePct, days) {
 
 /**
  * TDS amount on a gross interest figure.
- *   tdsAmount = grossInterest × TDS_RATE   (10 %)
+ *   tdsAmount = grossInterest × TDS_RATE  (10%)
  */
 export function tdsOnInterest(grossInterest) {
   return grossInterest * TDS_RATE;
@@ -138,7 +151,7 @@ export function tdsOnInterest(grossInterest) {
 
 /**
  * Net interest after TDS deduction.
- *   netInterest = grossInterest × (1 − TDS_RATE)   (90 %)
+ *   netInterest = grossInterest × (1 − TDS_RATE)  (90%)
  */
 export function netInterest(grossInterest) {
   return grossInterest * (1 - TDS_RATE);
@@ -158,18 +171,26 @@ export function netAccruedInterest(principal, ratePct, days) {
  * Walk through all COMPLETED renewal cycles up to (but not including)
  * the cycle that contains `today`.
  *
- * KEY FIX: At each cycle boundary the principal is rolled with NET interest
- * (after TDS), matching real Bangladesh bank auto-renewal behaviour.
+ * CYCLE DATE CONVENTION:
+ *   • Cycle 1: startDate → firstMaturity          (original FDR dates)
+ *   • Cycle 2: firstMaturity + 1 day → firstMaturity + 1 day + months
+ *   • Cycle N: previous cycleEnd + 1 day → previous cycleEnd + 1 day + months
  *
- *   newPrincipal = oldPrincipal + netInterest(grossInterest)
+ * This matches real bank behaviour: the maturity date belongs to the
+ * ending cycle; the new cycle opens the next calendar day.
+ *
+ * TDS CONVENTION:
+ *   • totalTDSPaid = sum of TDS from COMPLETED cycles only
+ *   • tdsThisCycle = TDS for the current (possibly partial) cycle — kept separate
+ *   • UI shows them independently so there is no double-count
  *
  * Returns:
- *   cycleNumber      — 1-based index of the current (possibly partial) cycle
+ *   cycleNumber      — 1-based index of current (possibly partial) cycle
  *   cyclePrincipal   — net-compounded principal at the START of current cycle
- *   cycleStart       — Date: start of current cycle
- *   cycleEnd         — Date: end (maturity) of current cycle
- *   completedCycles  — number of fully elapsed cycles before current
- *   totalTDSPaid     — cumulative TDS deducted across all completed cycles
+ *   cycleStart       — Date: start of current cycle  (day after previous maturity)
+ *   cycleEnd         — Date: maturity of current cycle
+ *   completedCycles  — count of fully elapsed cycles before current
+ *   totalTDSPaid     — cumulative TDS from completed cycles ONLY
  */
 export function getCycleState(
   principal,
@@ -179,31 +200,39 @@ export function getCycleState(
   today,
 ) {
   let cyclePrincipal = principal;
-  let cycleStart = addMonths(firstMaturity, -months); // original open date
-  let cycleEnd = new Date(firstMaturity);
+  // Cycle 1 start = firstMaturity minus one term (the original open date)
+  let cycleStart = addMonths(firstMaturity, -months);
+  let cycleEnd = new Date(firstMaturity); // cycle 1 ends on firstMaturity
   let completedCycles = 0;
   let totalTDSPaid = 0;
 
-  // Advance through every cycle whose end date has already passed
-  while (cycleEnd <= today) {
+  // A cycle is "completed" when its maturity date is strictly in the past
+  // (i.e. today is AFTER cycleEnd, meaning today >= cycleEnd + 1 day)
+  while (cycleEnd < today) {
     const gross = cycleInterest(cyclePrincipal, ratePct, months);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
 
+    // Accumulate TDS from this now-completed cycle
     totalTDSPaid += tds;
-    cyclePrincipal = cyclePrincipal + net; // ← THE FIX: compound on NET only
-    cycleStart = new Date(cycleEnd);
-    cycleEnd = addMonths(cycleEnd, months);
+    // Roll principal forward using NET interest only
+    cyclePrincipal = cyclePrincipal + net;
+
+    // Next cycle starts the day AFTER this cycle's maturity
+    // e.g. cycle 1 ends 01.08.26 → cycle 2 starts 02.08.26
+    cycleStart = addDays(cycleEnd, 1);
+    // Next cycle ends: cycleStart + term months (calendar-safe)
+    cycleEnd = addMonths(cycleStart, months);
     completedCycles++;
   }
 
   return {
     cycleNumber: completedCycles + 1,
     cyclePrincipal, // net-compounded principal for the current cycle
-    cycleStart, // start of current cycle
-    cycleEnd, // end (maturity) of current cycle
+    cycleStart, // start of current cycle (day after previous maturity)
+    cycleEnd, // maturity of current cycle
     completedCycles,
-    totalTDSPaid,
+    totalTDSPaid, // TDS from completed cycles ONLY — excludes current cycle
   };
 }
 
@@ -212,12 +241,18 @@ export function getCycleState(
 /**
  * Calculate all display values for a single FDR.
  *
- * All monetary values are net of TDS:
- *   • matAmt        — what you receive at end of CURRENT cycle (principal + net cycle interest)
- *   • currentValue  — withdrawable value right now (principal + net accrued interest today)
- *   • cyclePrincipal— compounded principal at start of current cycle (net-rolled)
+ * Cycle date rule:
+ *   Cycle 1: startDate  → maturityDate           (original contract dates)
+ *   Cycle 2: maturityDate + 1d → maturityDate + 1d + months
+ *   ...and so on for every subsequent renewal.
  *
- * Returned shape (UI-compatible with old API):
+ * All monetary outputs are net of TDS:
+ *   matAmt        — principal + net interest at end of CURRENT cycle
+ *   currentValue  — cyclePrincipal + net accrued interest as of today
+ *   tdsThisCycle  — TDS that WILL BE deducted at end of current cycle
+ *   totalTDSPaid  — TDS already deducted across all COMPLETED cycles
+ *
+ * Returned shape (UI-compatible):
  *   { matAmt, currentValue, cyclePrincipal, cycleStart, cycleEnd,
  *     completedCycles, grossCycleInterest, tdsThisCycle, netCycleInterest,
  *     totalTDSPaid }
@@ -252,13 +287,12 @@ export function calculateFDR(
     };
   }
 
-  // ── During first cycle (before first maturity) ─────────────────────────
+  // ── During first cycle (today is on or after startDate, before maturityDate) ──
   if (today < mat) {
     const gross = cycleInterest(principal, ratePct, months);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
     const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-    // currentValue = principal + net accrued interest to date
     const currentValue =
       principal + netAccruedInterest(principal, ratePct, daysElapsed);
     return {
@@ -275,8 +309,11 @@ export function calculateFDR(
     };
   }
 
-  // ── Auto-renewed (at or past first maturity) ───────────────────────────
-  // getCycleState walks all completed cycles using NET compounding
+  // ── On maturityDate itself: treat as first day of cycle 2 ─────────────
+  // (today === mat falls through to Auto-Renewed below)
+
+  // ── Auto-renewed (today >= maturityDate) ──────────────────────────────
+  // getCycleState walks all completed cycles with next-day start convention
   const state = getCycleState(principal, ratePct, months, mat, today);
   const {
     cyclePrincipal,
@@ -286,15 +323,15 @@ export function calculateFDR(
     totalTDSPaid,
   } = state;
 
-  // Gross / TDS / Net for the CURRENT (possibly partial) cycle
+  // Interest components for the CURRENT (possibly partial) cycle
   const grossCycleInterest = cycleInterest(cyclePrincipal, ratePct, months);
   const tdsThisCycle = tdsOnInterest(grossCycleInterest);
   const netCycleInterest = netInterest(grossCycleInterest);
 
-  // matAmt: what you receive when THIS cycle matures (net-of-TDS)
+  // matAmt: full net payout when this cycle matures
   const matAmt = cyclePrincipal + netCycleInterest;
 
-  // currentValue: principal of this cycle + net accrued interest since cycleStart
+  // currentValue: net withdrawable value right now
   const daysInCycle = Math.floor((today - cycleStart) / (1000 * 60 * 60 * 24));
   const currentValue =
     cyclePrincipal + netAccruedInterest(cyclePrincipal, ratePct, daysInCycle);
@@ -309,7 +346,7 @@ export function calculateFDR(
     grossCycleInterest,
     tdsThisCycle,
     netCycleInterest,
-    totalTDSPaid,
+    totalTDSPaid, // completed cycles only — tdsThisCycle is separate
   };
 }
 
@@ -317,6 +354,7 @@ export function calculateFDR(
 
 /**
  * Get FDR status string.
+ * On maturityDate itself → 'Auto-Renewed' (cycle 2 has begun).
  */
 export function getFDRStatus(startDate, maturityDate, today) {
   const start = parseDate(startDate);
@@ -328,35 +366,28 @@ export function getFDRStatus(startDate, maturityDate, today) {
 
 /**
  * afterTDS — kept for backward UI compatibility.
- *
- * IMPORTANT: In the new engine, `currentValue` already reflects TDS-adjusted
- * figures (net accrued interest, net compounded principal). This function now
- * simply returns `currentValue` as-is, since TDS is already baked in.
- *
- * If you need to display the "net withdrawable" value, use `currentValue`
- * directly from calculateFDR(). This function is a no-op pass-through kept
- * so existing UI call-sites don't break.
+ * In the new engine currentValue is already net of TDS.
+ * This function is a no-op pass-through to avoid breaking any call-sites.
  */
-export function afterTDS(originalPrincipal, currentValue) {
-  // TDS is already deducted in currentValue (new engine).
-  // Return as-is — no double-deduction.
+export function afterTDS(_originalPrincipal, currentValue) {
   return currentValue;
 }
 
 /**
- * Get progress/days info for display.
- * For Auto-Renewed FDRs, uses the current cycle's start/end dates from
- * the fdr object (pre-calculated by calculateFDR).
+ * Get progress / days info for display.
+ *
+ * For Auto-Renewed FDRs the cycle dates from calculateFDR (already stored
+ * on the fdr object) are used directly — no redundant recomputation.
  *
  * Returns:
- *   label          — human-readable progress string
- *   days           — days remaining in current cycle
- *   percent        — progress % within current cycle
- *   renewedPercent — alias of percent (for Auto-Renewed)
- *   renewalStart   — Date: current cycle start
- *   nextMaturity   — Date: current cycle end
- *   overdueDays    — total days since original maturity
- *   completedCycles— number of completed auto-renewal cycles
+ *   label           — human-readable string
+ *   days            — days remaining in current cycle
+ *   percent         — elapsed % within current cycle
+ *   renewedPercent  — same as percent (alias for Auto-Renewed)
+ *   renewalStart    — Date: current cycle start
+ *   nextMaturity    — Date: current cycle end
+ *   overdueDays     — total days since original maturityDate
+ *   completedCycles — completed auto-renewal cycles
  */
 export function getDaysInfo(startDate, maturityDate, today, fdrExtra) {
   const start = parseDate(startDate);
@@ -380,7 +411,7 @@ export function getDaysInfo(startDate, maturityDate, today, fdrExtra) {
     };
   }
 
-  // Auto-Renewed — use cycle info from calculateFDR result if available
+  // Auto-Renewed — prefer pre-calculated values from calculateFDR on the fdr object
   const months = getDurationMonths(startDate, maturityDate);
   let cycleStart, cycleEnd, completedCycles;
 

@@ -69,21 +69,27 @@ export default function FDRTable({ fdrs, today, onDelete }) {
     );
   }
 
-  // Totals — currentValue is already net of TDS in the new engine
+  // ── Footer totals ──────────────────────────────────────────────────────────
+  // currentValue and matAmt are already net of TDS from the engine
   const totalPrin = fdrs.reduce((s, f) => s + f.principal, 0);
   const totalMat = fdrs.reduce((s, f) => s + Math.round(f.matAmt), 0);
   const totalCur = fdrs.reduce((s, f) => s + Math.round(f.currentValue), 0);
   const totalGain = totalCur - totalPrin;
-  // Sum of TDS deducted this cycle across all FDRs
-  const totalTDSThisCycle = fdrs.reduce(
+  // tdsThisCycle  = TDS for the current (active) cycle of each FDR
+  const totalTDSCurrent = fdrs.reduce(
     (s, f) => s + Math.round(f.tdsThisCycle ?? 0),
+    0,
+  );
+  // totalTDSPaid  = TDS already collected across completed prior cycles
+  const totalTDSPaid = fdrs.reduce(
+    (s, f) => s + Math.round(f.totalTDSPaid ?? 0),
     0,
   );
 
   return (
     <div className="glass-card overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1000px]">
+        <table className="w-full min-w-[1050px]">
           <thead>
             <tr style={{ background: "rgba(15,23,42,0.9)" }}>
               <Th sortKey="label" sortState={sort} onSort={handleSort}>
@@ -115,8 +121,10 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                 onSort={handleSort}
                 className="text-right"
               >
-                Maturity Amt{" "}
-                <span className="text-amber-400/60 normal-case">(net)</span>
+                Maturity Amt
+                <span className="text-amber-400/50 normal-case font-normal ml-0.5">
+                  (net)
+                </span>
               </Th>
               <Th
                 sortKey="currentValue"
@@ -124,11 +132,17 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                 onSort={handleSort}
                 className="text-right"
               >
-                Current Value{" "}
-                <span className="text-amber-400/60 normal-case">(net)</span>
+                Current Value
+                <span className="text-amber-400/50 normal-case font-normal ml-0.5">
+                  (net)
+                </span>
               </Th>
+              {/* Non-sortable TDS column — split into two sub-lines per row */}
               <th className="px-4 py-3 text-right text-[11px] font-bold text-amber-400/70 uppercase tracking-wider whitespace-nowrap">
-                TDS This Cycle
+                TDS
+                <div className="text-[9px] text-slate-600 font-normal normal-case mt-0.5">
+                  this cycle / prev paid
+                </div>
               </th>
               <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                 Progress
@@ -138,7 +152,7 @@ export default function FDRTable({ fdrs, today, onDelete }) {
               </th>
               <th className="px-4 py-3 w-10" />
             </tr>
-            {/* Blue accent line */}
+            {/* Accent line */}
             <tr>
               <td colSpan={12} className="p-0">
                 <div
@@ -172,7 +186,9 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                   ? (daysInfo.renewedPercent ?? daysInfo.percent)
                   : daysInfo.percent;
 
-              const tdsDisplay = Math.round(fdr.tdsThisCycle ?? 0);
+              // TDS values from calculateFDR (new engine)
+              const tdsThisCycle = Math.round(fdr.tdsThisCycle ?? 0);
+              const tdsPrevPaid = Math.round(fdr.totalTDSPaid ?? 0); // completed cycles only
 
               return (
                 <tr
@@ -184,7 +200,7 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                       : "transparent",
                   }}
                 >
-                  {/* FDR Name */}
+                  {/* FDR Name + status label */}
                   <td className="px-4 py-3">
                     <div className="font-bold text-white text-sm">
                       {fdr.label}
@@ -217,28 +233,28 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                     </span>
                   </td>
 
-                  {/* Start */}
+                  {/* Start date */}
                   <td className="px-4 py-3">
                     <span className="text-slate-400 text-sm tabular-nums">
                       {formatDate(fdr.startDate)}
                     </span>
                   </td>
 
-                  {/* Maturity Date */}
+                  {/* Original maturity date */}
                   <td className="px-4 py-3">
                     <span className="text-slate-400 text-sm tabular-nums">
                       {formatDate(fdr.maturityDate)}
                     </span>
                   </td>
 
-                  {/* Maturity Amount (net of TDS) */}
+                  {/* Maturity amount — net of TDS for current cycle */}
                   <td className="px-4 py-3 text-right">
                     <span className="text-slate-300 text-sm tabular-nums">
                       {formatBD(Math.round(fdr.matAmt))}
                     </span>
                   </td>
 
-                  {/* Current Value (net of TDS) */}
+                  {/* Current value — net of TDS, accrued to today */}
                   <td className="px-4 py-3 text-right">
                     <div className="font-bold text-blue-400 text-sm tabular-nums">
                       {formatBD(Math.round(fdr.currentValue))}
@@ -250,19 +266,24 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                     </div>
                   </td>
 
-                  {/* TDS This Cycle */}
+                  {/* TDS column:
+                        Line 1 (amber)  — TDS for THIS cycle (will be deducted at next maturity)
+                        Line 2 (slate)  — TDS already paid across all completed prior cycles
+                        Line 2 hidden   — if no prior cycles (first cycle FDR)               */}
                   <td className="px-4 py-3 text-right">
                     <div className="font-bold text-amber-400 text-sm tabular-nums">
-                      {formatBD(tdsDisplay)}
+                      Tk {formatBD(tdsThisCycle)}
                     </div>
-                    {fdr.totalTDSPaid > 0 && (
-                      <div className="text-[11px] text-slate-600 mt-0.5 tabular-nums">
-                        +{formatBD(Math.round(fdr.totalTDSPaid))} prev
+                    {tdsPrevPaid > 0 ? (
+                      <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                        +{formatBD(tdsPrevPaid)} paid
                       </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-700 mt-0.5">—</div>
                     )}
                   </td>
 
-                  {/* Progress */}
+                  {/* Progress bar */}
                   <td className="px-4 py-3 min-w-[110px]">
                     <ProgressBar
                       percent={barPercent}
@@ -271,7 +292,7 @@ export default function FDRTable({ fdrs, today, onDelete }) {
                     />
                   </td>
 
-                  {/* Status */}
+                  {/* Status badge */}
                   <td className="px-4 py-3">
                     <StatusBadge status={status} />
                   </td>
@@ -291,7 +312,7 @@ export default function FDRTable({ fdrs, today, onDelete }) {
             })}
           </tbody>
 
-          {/* Totals row */}
+          {/* ── Totals footer ── */}
           <tfoot>
             <tr>
               <td colSpan={12} className="p-0">
@@ -304,28 +325,45 @@ export default function FDRTable({ fdrs, today, onDelete }) {
               </td>
             </tr>
             <tr style={{ background: "rgba(15,23,42,0.95)" }}>
-              <td
-                className="px-4 py-3 font-bold text-white text-sm"
-                colSpan={1}
-              >
-                TOTALS
-              </td>
+              {/* Label */}
+              <td className="px-4 py-3 font-bold text-white text-sm">TOTALS</td>
+
+              {/* Total principal */}
               <td className="px-4 py-3 text-right font-bold text-white text-sm tabular-nums">
                 {formatBD(totalPrin)}
               </td>
+
+              {/* Term / Rate / Start / Maturity — empty */}
               <td colSpan={4} />
+
+              {/* Total maturity (net) */}
               <td className="px-4 py-3 text-right font-bold text-slate-200 text-sm tabular-nums">
                 {formatBD(totalMat)}
               </td>
+
+              {/* Total current value + gain */}
               <td className="px-4 py-3 text-right font-bold text-blue-400 text-sm tabular-nums">
                 <div>{formatBD(totalCur)}</div>
                 <div className="text-emerald-500 text-[11px]">
                   +{formatBD(totalGain)}
                 </div>
               </td>
-              <td className="px-4 py-3 text-right font-bold text-amber-400 text-sm tabular-nums">
-                {formatBD(totalTDSThisCycle)}
+
+              {/* TDS totals:
+                    Line 1 — sum of tdsThisCycle across all FDRs
+                    Line 2 — sum of totalTDSPaid (prior completed cycles) across all FDRs */}
+              <td className="px-4 py-3 text-right text-sm tabular-nums">
+                <div className="font-bold text-amber-400">
+                  Tk {formatBD(totalTDSCurrent)}
+                </div>
+                {totalTDSPaid > 0 && (
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    +{formatBD(totalTDSPaid)} paid
+                  </div>
+                )}
               </td>
+
+              {/* Progress / Status / Delete — empty */}
               <td colSpan={3} />
             </tr>
           </tfoot>

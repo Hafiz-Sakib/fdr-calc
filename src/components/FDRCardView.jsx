@@ -5,8 +5,6 @@ import {
   getFDRStatus,
   getDaysInfo,
   STATUS_CONFIG,
-  tdsOnInterest,
-  cycleInterest,
 } from "../utils/fdrCalc";
 import { Trash2, Calendar, TrendingUp, ShieldCheck } from "lucide-react";
 
@@ -16,17 +14,13 @@ function FDRCard({ fdr, today, onDelete }) {
   const daysInfo = getDaysInfo(fdr.startDate, fdr.maturityDate, today, fdr);
   const cfg = STATUS_CONFIG[status];
 
-  // Gain = currentValue (already net of TDS) minus original principal
+  // Net gain = currentValue (already net of TDS) minus original principal
   const gain = Math.round(fdr.currentValue) - fdr.principal;
   const gainPct = ((gain / fdr.principal) * 100).toFixed(2);
 
-  // TDS breakdown for display
-  // tdsThisCycle comes from calculateFDR; fall back gracefully
-  const tdsThisCycle =
-    fdr.tdsThisCycle ??
-    tdsOnInterest(
-      cycleInterest(fdr.cyclePrincipal ?? fdr.principal, fdr.rate, fdr.months),
-    );
+  // TDS fields from calculateFDR
+  const tdsThisCycle = Math.round(fdr.tdsThisCycle ?? 0);
+  const totalTDSPaid = Math.round(fdr.totalTDSPaid ?? 0); // completed cycles only
 
   const progressColor =
     {
@@ -84,7 +78,7 @@ function FDRCard({ fdr, today, onDelete }) {
         </p>
       </div>
 
-      {/* ── Rate / Term / Return row ── */}
+      {/* ── Rate / Term / Net Return row ── */}
       <div
         className="mx-5 mb-4 grid grid-cols-3 rounded-xl overflow-hidden border border-white/[0.06]"
         style={{ background: "rgba(255,255,255,0.03)" }}
@@ -132,7 +126,7 @@ function FDRCard({ fdr, today, onDelete }) {
           />
         </div>
 
-        {/* Status label below bar */}
+        {/* Label below bar */}
         <div className="mt-1.5">
           {status === "Running" && (
             <p className={`text-[11px] font-medium ${cfg.text}`}>
@@ -183,7 +177,7 @@ function FDRCard({ fdr, today, onDelete }) {
         </div>
       )}
 
-      {/* ── Maturity + Current Value ── */}
+      {/* ── Maturity Amount + Current Value ── */}
       <div className="mx-5 mb-4 grid grid-cols-2 gap-3">
         <div
           className="rounded-xl p-3 border border-white/[0.05]"
@@ -209,12 +203,12 @@ function FDRCard({ fdr, today, onDelete }) {
         </div>
       </div>
 
-      {/* ── TDS This Cycle ── */}
+      {/* ── TDS breakdown ── */}
       <div
         className="mx-5 mb-4 rounded-xl p-3 border border-amber-500/20"
         style={{ background: "rgba(245,158,11,0.07)" }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <ShieldCheck size={13} className="text-amber-400" />
             <p className="text-[11px] font-bold text-amber-400/80 uppercase tracking-wider">
@@ -222,18 +216,22 @@ function FDRCard({ fdr, today, onDelete }) {
             </p>
           </div>
           <p className="text-sm font-bold text-amber-400 tabular-nums">
-            Tk {formatBD(Math.round(tdsThisCycle))}
+            Tk {formatBD(tdsThisCycle)}
           </p>
         </div>
-        {fdr.totalTDSPaid > 0 && (
-          <p className="text-[10px] text-slate-600 mt-1 pl-5">
-            Cumulative TDS paid: Tk{" "}
-            {formatBD(Math.round(fdr.totalTDSPaid + tdsThisCycle))}
+        {/* Only show cumulative line when there are completed prior cycles */}
+        {totalTDSPaid > 0 && (
+          <p className="text-[10px] text-slate-500 pl-5">
+            Previously paid (cycles 1–
+            {fdr.completedCycles ?? daysInfo.completedCycles}):&nbsp;
+            <span className="text-slate-400 font-semibold">
+              Tk {formatBD(totalTDSPaid)}
+            </span>
           </p>
         )}
       </div>
 
-      {/* ── Gain Banner ── */}
+      {/* ── Net Gain banner ── */}
       <div
         className="mx-5 mb-5 rounded-xl px-4 py-2.5 border border-emerald-500/20 flex items-center gap-2"
         style={{ background: "rgba(16,185,129,0.08)" }}
