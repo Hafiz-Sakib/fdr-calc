@@ -75,6 +75,18 @@ export function parseDate(str) {
 }
 
 /**
+ * Compare two dates by calendar day only (ignores time).
+ * Returns true if date a and date b are the same calendar date.
+ */
+export function isSameDay(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
  * Format date as DD.MM.YY
  */
 export function formatDate(dateStr) {
@@ -207,8 +219,9 @@ export function getCycleState(
   let totalTDSPaid = 0;
 
   // A cycle is "completed" when its maturity date is strictly in the past
-  // (i.e. today is AFTER cycleEnd, meaning today >= cycleEnd + 1 day)
-  while (cycleEnd < today) {
+  // (i.e. today is AFTER cycleEnd, meaning today > cycleEnd by at least 1 day)
+  // Using isSameDay check: if today === cycleEnd, cycle is NOT yet completed.
+  while (cycleEnd < today && !isSameDay(cycleEnd, today)) {
     const gross = cycleInterest(cyclePrincipal, ratePct, months);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
@@ -245,6 +258,12 @@ export function getCycleState(
  *   Cycle 1: startDate  → maturityDate           (original contract dates)
  *   Cycle 2: maturityDate + 1d → maturityDate + 1d + months
  *   ...and so on for every subsequent renewal.
+ *
+ * KEY FIX — maturity-day identity:
+ *   When today === cycleEnd (the exact maturity/last day of any cycle),
+ *   currentValue is set equal to matAmt. This ensures:
+ *     • No floating-point day-counting gap on the final day
+ *     • 100% progress + 0 days left → currentValue === matAmt exactly
  *
  * All monetary outputs are net of TDS:
  *   matAmt        — principal + net interest at end of CURRENT cycle
@@ -288,15 +307,20 @@ export function calculateFDR(
   }
 
   // ── During first cycle (today is on or after startDate, before maturityDate) ──
-  if (today < mat) {
+  // isSameDay(today, mat) falls through to the unified path below
+  if (today < mat && !isSameDay(today, mat)) {
     const gross = cycleInterest(principal, ratePct, months);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
+    const matAmt = principal + net;
     const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-    const currentValue =
-      principal + netAccruedInterest(principal, ratePct, daysElapsed);
+    // ── Maturity-day identity: if today === cycleEnd, currentValue === matAmt ──
+    const cycleTotalDays = Math.floor((mat - start) / (1000 * 60 * 60 * 24));
+    const currentValue = (daysElapsed >= cycleTotalDays)
+      ? matAmt
+      : principal + netAccruedInterest(principal, ratePct, daysElapsed);
     return {
-      matAmt: principal + net,
+      matAmt,
       currentValue,
       cyclePrincipal: principal,
       cycleStart: start,
@@ -309,11 +333,10 @@ export function calculateFDR(
     };
   }
 
-  // ── On maturityDate itself: treat as first day of cycle 2 ─────────────
-  // (today === mat falls through to Auto-Renewed below)
-
-  // ── Auto-renewed (today >= maturityDate) ──────────────────────────────
-  // getCycleState walks all completed cycles with next-day start convention
+  // ── On maturityDate itself OR Auto-renewed (today >= maturityDate) ──────
+  // getCycleState walks all completed cycles with next-day start convention.
+  // The isSameDay guard inside getCycleState ensures that if today === cycleEnd
+  // of any renewal cycle, that cycle is treated as current (not completed).
   const state = getCycleState(principal, ratePct, months, mat, today);
   const {
     cyclePrincipal,
@@ -331,10 +354,19 @@ export function calculateFDR(
   // matAmt: full net payout when this cycle matures
   const matAmt = cyclePrincipal + netCycleInterest;
 
-  // currentValue: net withdrawable value right now
-  const daysInCycle = Math.floor((today - cycleStart) / (1000 * 60 * 60 * 24));
-  const currentValue =
-    cyclePrincipal + netAccruedInterest(cyclePrincipal, ratePct, daysInCycle);
+  // ── KEY FIX: Maturity-day identity ────────────────────────────────────
+  // When today is exactly the last day of the current cycle,
+  // currentValue must equal matAmt — no partial-day accrual calculation.
+  // This fixes the Math.floor gap where daysInCycle = cycleTotalDays - 1
+  // on the last day, causing a small but incorrect shortfall.
+  let currentValue;
+  if (isSameDay(today, cycleEnd)) {
+    // Today IS the maturity date — full cycle interest has accrued
+    currentValue = matAmt;
+  } else {
+    const daysInCycle = Math.floor((today - cycleStart) / (1000 * 60 * 60 * 24));
+    currentValue = cyclePrincipal + netAccruedInterest(cyclePrincipal, ratePct, daysInCycle);
+  }
 
   return {
     matAmt,
@@ -360,7 +392,7 @@ export function getFDRStatus(startDate, maturityDate, today) {
   const start = parseDate(startDate);
   const mat = parseDate(maturityDate);
   if (today < start) return "Not Started";
-  if (today < mat) return "Running";
+  if (today < mat && !isSameDay(today, mat)) return "Running";
   return "Auto-Renewed";
 }
 
@@ -439,9 +471,11 @@ export function getDaysInfo(startDate, maturityDate, today, fdrExtra) {
     0,
     Math.ceil((today - cycleStart) / (1000 * 60 * 60 * 24)),
   );
-  const renewedPercent = Math.min(100, (elapsedInCycle / totalCycleDays) * 100);
+  // ── KEY FIX: On the exact maturity day, force 100% progress & 0 days left ──
+  const isMaturityDay = isSameDay(today, cycleEnd);
+  const renewedPercent = isMaturityDay ? 100 : Math.min(100, (elapsedInCycle / totalCycleDays) * 100);
   const overdueDays = Math.ceil((today - mat) / (1000 * 60 * 60 * 24));
-  const remaining = Math.ceil((cycleEnd - today) / (1000 * 60 * 60 * 24));
+  const remaining = isMaturityDay ? 0 : Math.max(0, Math.ceil((cycleEnd - today) / (1000 * 60 * 60 * 24)));
 
   return {
     label: `${formatMonthsDays(overdueDays)} past maturity`,
