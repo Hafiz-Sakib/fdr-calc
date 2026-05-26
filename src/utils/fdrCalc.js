@@ -111,14 +111,19 @@ export function formatDateLong(dateStr) {
 
 /**
  * Format a duration in days as a readable string.
- * e.g. 65 days → "2mo 5d", 30 days → "1mo", 12 days → "12d"
+ * Uses 30.4375 (365.25/12) as the average days-per-month so that
+ * calendar months (89 d, 91 d, 92 d) round to the correct month count
+ * instead of showing off-by-one artefacts from a naive /30 divisor.
+ * e.g. 89 d → "3mo", 92 d → "3mo", 184 d → "6mo", 14 d → "14d"
  */
 export function formatMonthsDays(totalDays) {
-  const months = Math.floor(totalDays / 30);
-  const days = totalDays % 30;
-  if (months > 0 && days > 0) return `${months}mo ${days}d`;
-  if (months > 0) return `${months}mo`;
-  return `${days}d`;
+  const AVG_DAYS_PER_MONTH = 365.25 / 12; // ≈ 30.4375
+  const months = Math.round(totalDays / AVG_DAYS_PER_MONTH);
+  if (months <= 0) return `${totalDays}d`;
+  // Residual days — suppress small noise (≤ 2 d) from calendar irregularity
+  const residual = Math.round(totalDays - months * AVG_DAYS_PER_MONTH);
+  if (residual > 2) return `${months}mo ${residual}d`;
+  return `${months}mo`;
 }
 
 /**
@@ -136,15 +141,31 @@ export function getDurationMonths(startDate, maturityDate) {
 // ── Core interest primitives ───────────────────────────────────────────────
 
 /**
- * Gross interest for one full cycle using simple interest.
- *   grossInterest = principal × (rate / 100) × (months / 12)
+ * Gross interest for one full cycle — unified day-count basis (days / 365).
+ *
+ * DUAL-BASIS FIX: The original implementation used months/12 for matAmt but
+ * days/365 for currentValue accrual. When actual cycle days differ from the
+ * ideal months×(365/12) (e.g. a 184-day 6-month cycle vs the assumed 182.5),
+ * the two paths diverged — causing currentValue to exceed matAmt on the last
+ * day before maturity, then drop back on maturity day (visible regression).
+ *
+ * By passing the actual cycle day count here, both matAmt and currentValue
+ * now use the same denominator, so accrual converges smoothly to matAmt on
+ * the final day with zero gap and zero regression.
+ *
+ *   grossInterest = principal × (rate / 100) × (cycleDays / 365)
+ *
+ * @param {number} principal  - cycle opening principal
+ * @param {number} ratePct    - annual interest rate in percent
+ * @param {number} cycleDays  - actual calendar days in the cycle
  */
-export function cycleInterest(principal, ratePct, months) {
-  return principal * (ratePct / 100) * (months / 12);
+export function cycleInterest(principal, ratePct, cycleDays) {
+  return principal * (ratePct / 100) * (cycleDays / 365);
 }
 
 /**
  * Gross accrued interest for a partial period (elapsed days, 365-day year).
+ * Unchanged — always used days/365. Now consistent with cycleInterest.
  *   accruedInterest = principal × (rate / 100) × (days / 365)
  */
 export function accruedInterest(principal, ratePct, days) {
@@ -222,7 +243,10 @@ export function getCycleState(
   // (i.e. today is AFTER cycleEnd, meaning today > cycleEnd by at least 1 day)
   // Using isSameDay check: if today === cycleEnd, cycle is NOT yet completed.
   while (cycleEnd < today && !isSameDay(cycleEnd, today)) {
-    const gross = cycleInterest(cyclePrincipal, ratePct, months);
+    // Actual calendar days in this cycle — used for both matAmt and accrual
+    // so the two paths share the same denominator (day-count basis).
+    const cycleDays = Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24));
+    const gross = cycleInterest(cyclePrincipal, ratePct, cycleDays);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
 
@@ -289,7 +313,8 @@ export function calculateFDR(
 
   // ── Before FDR starts ──────────────────────────────────────────────────
   if (today < start) {
-    const gross = cycleInterest(principal, ratePct, months);
+    const cycleDays = Math.floor((mat - start) / (1000 * 60 * 60 * 24));
+    const gross = cycleInterest(principal, ratePct, cycleDays);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
     return {
@@ -309,13 +334,13 @@ export function calculateFDR(
   // ── During first cycle (today is on or after startDate, before maturityDate) ──
   // isSameDay(today, mat) falls through to the unified path below
   if (today < mat && !isSameDay(today, mat)) {
-    const gross = cycleInterest(principal, ratePct, months);
+    const cycleTotalDays = Math.floor((mat - start) / (1000 * 60 * 60 * 24));
+    const gross = cycleInterest(principal, ratePct, cycleTotalDays);
     const tds = tdsOnInterest(gross);
     const net = netInterest(gross);
     const matAmt = principal + net;
     const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-    // ── Maturity-day identity: if today === cycleEnd, currentValue === matAmt ──
-    const cycleTotalDays = Math.floor((mat - start) / (1000 * 60 * 60 * 24));
+    // Accrual uses same cycleTotalDays denominator → no dual-basis gap
     const currentValue = (daysElapsed >= cycleTotalDays)
       ? matAmt
       : principal + netAccruedInterest(principal, ratePct, daysElapsed);
@@ -347,7 +372,8 @@ export function calculateFDR(
   } = state;
 
   // Interest components for the CURRENT (possibly partial) cycle
-  const grossCycleInterest = cycleInterest(cyclePrincipal, ratePct, months);
+  const cycleTotalDays = Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24));
+  const grossCycleInterest = cycleInterest(cyclePrincipal, ratePct, cycleTotalDays);
   const tdsThisCycle = tdsOnInterest(grossCycleInterest);
   const netCycleInterest = netInterest(grossCycleInterest);
 
@@ -386,13 +412,19 @@ export function calculateFDR(
 
 /**
  * Get FDR status string.
- * On maturityDate itself → 'Auto-Renewed' (cycle 2 has begun).
+ *
+ * Status rules:
+ *   today < startDate           → 'Not Started'
+ *   startDate ≤ today < matDate → 'Running'
+ *   today === matDate           → 'Matured'   (contract reached term; renewal opens next day)
+ *   today > matDate             → 'Auto-Renewed'
  */
 export function getFDRStatus(startDate, maturityDate, today) {
   const start = parseDate(startDate);
   const mat = parseDate(maturityDate);
   if (today < start) return "Not Started";
   if (today < mat && !isSameDay(today, mat)) return "Running";
+  if (isSameDay(today, mat)) return "Matured";
   return "Auto-Renewed";
 }
 
@@ -440,6 +472,20 @@ export function getDaysInfo(startDate, maturityDate, today, fdrExtra) {
       label: `${formatMonthsDays(remaining)} remaining`,
       days: remaining,
       percent,
+    };
+  }
+
+  // Matured — today is the exact maturity day; renewal opens tomorrow
+  if (status === "Matured") {
+    return {
+      label: "Matured today",
+      days: 0,
+      percent: 100,
+      renewedPercent: 100,
+      renewalStart: mat,
+      nextMaturity: mat,
+      overdueDays: 0,
+      completedCycles: 0,
     };
   }
 
@@ -505,6 +551,12 @@ export const STATUS_CONFIG = {
     text: "text-emerald-400",
     border: "border-emerald-500/30",
     dot: "bg-emerald-400",
+  },
+  Matured: {
+    bg: "bg-violet-500/15",
+    text: "text-violet-400",
+    border: "border-violet-500/30",
+    dot: "bg-violet-400",
   },
   "Auto-Renewed": {
     bg: "bg-blue-500/15",
