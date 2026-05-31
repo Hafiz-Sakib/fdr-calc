@@ -8,6 +8,7 @@ import AddFDRModal from './components/AddFDRModal';
 import ChartSection from './components/ChartSection';
 import Footer from './components/Footer';
 import { calculateFDR, parseDate } from './utils/fdrCalc';
+import MaturityNotification from './components/MaturityNotification';
 
 const DEFAULT_FDRS = [
   { id: 'fdr-001', label: 'FDR 1', principal: 300000, months: 6, rate: 9.0, startDate: '2025-07-17', maturityDate: '2026-01-17' },
@@ -90,6 +91,7 @@ export default function App() {
       {showModal && (
         <AddFDRModal onClose={() => setShowModal(false)} onAdd={handleAdd} />
       )}
+      <MaturityNotification fdrs={fdrs} today={today} />
     </div>
   );
 }
